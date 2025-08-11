@@ -14,7 +14,7 @@ const {
 } = require('./database').default;
 
 const app = express();
-const PORT = config.port;
+const PORT = process.env.PORT || (config && config.port) || 3000;
 
 // Config negocio
 const OPEN_HOUR = config.business.openHour;   // 10:00
@@ -188,6 +188,10 @@ app.delete('/api/closures/:date', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+// Ruta de salud para mantener vivo el servicio
+app.get('/health', (_req, res) => res.sendStatus(200));
+
 
 // raíz -> tu index.html
 app.get('/', (_, res) => {
