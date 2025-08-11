@@ -1,8 +1,21 @@
-const { Pool } = require('pg');
-const config = require('./config');
+import { Pool } from 'pg';
+let config;
+try {
+  config = require('./config'); // para uso local si lo necesitás
+} catch (_) {
+  config = {};
+}
 
-// Configuración de la conexión a PostgreSQL
-const pool = new Pool(config.database);
+// Si hay DATABASE_URL (producción), usamos esa conexión con SSL.
+// Si no, caemos a config.database (tu config local).
+const useDatabaseUrl = !!process.env.DATABASE_URL;
+
+const pool = useDatabaseUrl
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    })
+  : new Pool(config.database || {});
 
 // Inicializar la base de datos con las tablas necesarias
 async function initDatabase() {
@@ -164,7 +177,7 @@ async function closePool() {
   await pool.end();
 }
 
-module.exports = {
+export default {
   initDatabase,
   getBookings,
   createBooking,

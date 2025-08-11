@@ -11,7 +11,7 @@ const {
   addClosure, 
   removeClosure,
   closePool 
-} = require('./database');
+} = require('./database').default;
 
 const app = express();
 const PORT = config.port;
