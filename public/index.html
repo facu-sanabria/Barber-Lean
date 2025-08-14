@@ -115,6 +115,17 @@
                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 hover:border-gray-300">
         </div>
       </div>
+    
+        <div class="space-y-2">
+          <label for="telefono" class="block text-sm font-medium text-gray-700">Teléfono</label>
+          <input id="telefono" type="tel" placeholder="11 1234-5678" 
+                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 hover:border-gray-300">
+        </div>
+        <div class="space-y-2">
+          <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+          <input id="email" type="email" placeholder="tu@email.com" 
+                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 hover:border-gray-300">
+        </div>
     </div>
           
     <!-- Calendario con diseño mejorado -->
@@ -175,6 +186,15 @@
           <span class="font-medium">Horario:</span> 
           <span id="confirm-time" class="text-gray-900"></span>
         </p>
+        <p class="text-gray-700 flex justify-between">
+          <span class="font-medium">Teléfono:</span> 
+          <span id="confirm-phone" class="text-gray-900"></span>
+        </p>
+        <p class="text-gray-700 flex justify-between">
+          <span class="font-medium">Email:</span> 
+          <span id="confirm-email" class="text-gray-900"></span>
+        </p>
+    
       </div>
       
       <div class="flex justify-end">
@@ -212,6 +232,11 @@
       const nextWeekBtn = document.getElementById('next-week');
       const nombreInput = document.getElementById('nombre');
       const apellidoInput = document.getElementById('apellido');
+      const telefonoInput = document.getElementById('telefono');
+      const emailInput = document.getElementById('email');
+      const confirmPhoneElement = document.getElementById('confirm-phone');
+      const confirmEmailElement = document.getElementById('confirm-email');
+
       const confirmationSection = document.getElementById('confirmation');
       const confirmNameElement = document.getElementById('confirm-name');
       const confirmDateElement = document.getElementById('confirm-date');
@@ -336,8 +361,10 @@
         confirmNameElement.textContent = `${(nombreInput.value || '')} ${(apellidoInput.value || '')}`.trim();
         confirmDateElement.textContent = selectedTime ? formatDate(selectedTime.date) : '';
         confirmTimeElement.textContent = selectedTime ? selectedTime.time : '';
+        confirmPhoneElement.textContent = (telefonoInput?.value || '').trim();
+        confirmEmailElement.textContent = (emailInput?.value || '').trim();
 
-        const ready = !!(selectedTime && nombreInput.value.trim() && apellidoInput.value.trim());
+        const ready = !!(selectedTime && nombreInput.value.trim() && apellidoInput.value.trim() && telefonoInput.value.trim() && emailInput.value.trim());
         confirmBtn.disabled = !ready;
         confirmBtn.classList.toggle('btn-disabled', !ready);
         confirmBtn.textContent = ready ? 'Reservar turno' : 'Completa los datos para reservar';
@@ -380,7 +407,9 @@
       });
 
       nombreInput.addEventListener('input', () => { if (selectedTime) showConfirmation(); });
-      apellidoInput.addEventListener('input', () => { if (selectedTime) showConfirmation(); });
+      apellidoInput.addEventListener('input', () => { if (selectedTime) showConfirmation()});
+      telefonoInput.addEventListener('input', () => { if (selectedTime) showConfirmation(); });
+      emailInput.addEventListener('input', () => { if (selectedTime) showConfirmation(); });
 
       confirmBtn.addEventListener('click', async () => {
         if (!selectedTime) return;
@@ -388,6 +417,8 @@
         const payload = {
           nombre: nombreInput.value.trim(),
           apellido: apellidoInput.value.trim(),
+          telefono: telefonoInput.value.trim(),
+          email: emailInput.value.trim(),
           date: formatDate(selectedTime.date, true),
           time: selectedTime.time
         };
@@ -414,9 +445,9 @@
           alert(error || 'No se pudo reservar. Probá con otro horario.');
           generateTimeSlots(selectedDay);
         }
-      });
+         });
       generateWeekDays();
-    });
+      });
   </script>
 </body>
 </html>

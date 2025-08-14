@@ -1,119 +1,150 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Panel del Peluquero — Admin</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Turnos</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 min-h-screen">
-  <div class="max-w-3xl mx-auto p-6">
+  <div class="max-w-5xl mx-auto p-4 md:p-8">
     <header class="mb-6">
-      <h1 class="text-2xl font-bold text-gray-800">Panel del Peluquero</h1>
-      <p class="text-sm text-gray-500">Ver, cancelar y cerrar días completos</p>
+      <h1 class="text-3xl font-bold">Panel Admin</h1>
+      <p class="text-gray-600">Gestioná cierres, bloqueos y cancelaciones.</p>
     </header>
 
-    <!-- Filtros / acciones -->
-    <div class="bg-white rounded-lg shadow p-4 mb-4">
-      <div class="flex flex-wrap items-center gap-2">
-        <label class="text-sm text-gray-700">Fecha</label>
-        <input id="date" type="date" class="border rounded px-2 py-1" />
-        <button id="load" class="px-3 py-1 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700">Cargar</button>
-        <button id="clear" class="px-3 py-1 rounded border text-sm">Quitar filtro</button>
+    <!-- Filtros -->
+    <section class="bg-white rounded-xl shadow p-4 mb-4 flex flex-wrap items-end gap-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Fecha</label>
+        <input id="date" type="date" class="px-3 py-2 border rounded-lg">
       </div>
-
-      <div class="mt-3 flex items-center gap-2">
-        <span id="closed-badge" class="hidden text-sm px-2 py-1 rounded-full bg-red-100 text-red-700">Día cerrado</span>
-        <button id="toggle-close" class="px-3 py-1 rounded text-sm border">Cargar…</button>
+      <div>
+        <label class="block text-sm font-medium mb-1 invisible">.</label>
+        <button id="refresh" class="px-3 py-2 border rounded-lg hover:bg-gray-50">Actualizar</button>
       </div>
-    </div>
+      <div class="ml-auto flex gap-2">
+        <button id="close-day" class="px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700">Cerrar día</button>
+        <button id="open-day" class="px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Reabrir día</button>
+      </div>
+    </section>
 
-    <!-- Lista -->
-    <div id="list" class="bg-white rounded-lg shadow divide-y"></div>
+    <!-- Bloqueo de horarios SOLO POR SLOT -->
+    <section class="bg-white rounded-xl shadow p-4 mb-4">
+      <h2 class="font-semibold mb-1">Bloquear horarios del día</h2>
+      <p class="text-sm text-gray-600 mb-3">
+        Hacé click en un horario para bloquear o desbloquear. Primero seleccioná una fecha.
+      </p>
+      <div id="slots-grid" class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-2"></div>
+    </section>
+
+    <!-- Listado -->
+    <section class="bg-white rounded-xl shadow">
+      <div class="p-4 border-b">
+        <h2 class="font-semibold">Turnos del día</h2>
+      </div>
+      <div id="list" class="divide-y"></div>
+      <div id="empty" class="hidden p-4 text-sm text-gray-500">No hay turnos para esa fecha.</div>
+    </section>
   </div>
 
   <script>
-    // Elementos
     const dateInput = document.getElementById('date');
-    const loadBtn = document.getElementById('load');
-    const clearBtn = document.getElementById('clear');
+    const refreshBtn = document.getElementById('refresh');
+    const closeBtn = document.getElementById('close-day');
+    const openBtn  = document.getElementById('open-day');
     const listEl = document.getElementById('list');
-    const toggleCloseBtn = document.getElementById('toggle-close');
-    const closedBadge = document.getElementById('closed-badge');
+    const emptyEl = document.getElementById('empty');
+    const slotsGrid = document.getElementById('slots-grid');
 
-    // Utils
-    function todayStr() {
-      const t = new Date();
-      const yyyy = t.getFullYear();
-      const mm = String(t.getMonth()+1).padStart(2,'0');
-      const dd = String(t.getDate()).padStart(2,'0');
-      return `${yyyy}-${mm}-${dd}`;
+    const SLOTS = [
+      "11:00","11:30","12:00","12:30","13:00","13:30",
+      "15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00"
+    ];
+
+    function todayISO() {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
     }
+    dateInput.value = todayISO();
 
-    // API helpers
     async function fetchBookings() {
-      const date = dateInput.value;
-      const url = date ? `/api/bookings?date=${date}` : '/api/bookings';
-      const res = await fetch(url);
-      return res.ok ? res.json() : [];
+      const res = await fetch(`/api/bookings?date=${dateInput.value}`);
+      return res.json();
     }
     async function fetchClosures() {
       const res = await fetch('/api/closures');
-          return res.ok ? res.json() : [];
-        }
-        async function isClosed(date) {
-          const closures = await fetchClosures();
-          const normalizedClosures = closures.map(d => String(d).slice(0, 10));
-          return normalizedClosures.includes(date);
-        }
+      return res.json();
+    }
+    async function isClosed(date) {
+      const closures = await fetchClosures();
+      return closures.includes(date);
+    }
 
-        async function setClosed(date, closed) {
-          if (closed) {
-            const res = await fetch('/api/closures', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ date })
+    async function fetchBlocked(date) {
+      const res = await fetch(`/api/blocked?date=${date}`);
+      const data = await res.json();
+      return data.slots || [];
+    }
+    async function setBlocked(date, slots) {
+      const res = await fetch('/api/blocked', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ date, slots })
+      });
+      return res.ok;
+    }
+    async function unsetBlocked(date, slots) {
+      const res = await fetch('/api/blocked', {
+        method:'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ date, slots })
+      });
+      return res.ok;
+    }
+
+    async function renderSlotsGrid() {
+      slotsGrid.innerHTML = '';
+      const date = dateInput.value?.trim();
+      let blocked = [];
+
+      if (date) {
+        blocked = await fetchBlocked(date);
+      }
+
+      SLOTS.forEach(t => {
+        const isBlocked = blocked.includes(t);
+        const btn = document.createElement('button');
+        btn.textContent = t;
+        btn.className = `px-3 py-2 text-sm rounded border ${isBlocked ? 'bg-red-100 border-red-300 text-red-700' : 'hover:bg-gray-50'}`;
+
+        btn.addEventListener('click', async () => {
+          if (!dateInput.value || !dateInput.value.trim()) {
+            alert('Seleccioná una fecha.');
+            dateInput.focus();
+            return;
+          }
+          const d = dateInput.value.trim();
+          if (isBlocked) await unsetBlocked(d, [t]);
+          else           await setBlocked(d, [t]);
+          renderSlotsGrid();
         });
-        return res.ok;
-      } else {
-        const res = await fetch(`/api/closures/${date}`, { method: 'DELETE' });
-        return res.ok;
-      }
+
+        slotsGrid.appendChild(btn);
+      });
     }
 
-    // UI
-    async function renderClosureUI() {
-      const date = dateInput.value;
-      const closed = date ? await isClosed(date) : false;
-
-      closedBadge.classList.toggle('hidden', !closed);
-
-      toggleCloseBtn.textContent = closed ? 'Reabrir día' : 'Cerrar día';
-      toggleCloseBtn.className = closed
-        ? 'px-3 py-1 rounded text-sm bg-green-600 text-white hover:bg-green-700'
-        : 'px-3 py-1 rounded text-sm bg-red-600 text-white hover:bg-red-700';
-
-      listEl.dataset.closed = closed ? '1' : '0';
-    }
-
-    async function render() {
-      await renderClosureUI();
-
+    async function renderList() {
       listEl.innerHTML = '';
+      emptyEl.classList.add('hidden');
       const items = await fetchBookings();
-      const closed = listEl.dataset.closed === '1';
 
-      if (closed) {
-        const note = document.createElement('div');
-        note.className = 'p-3 mb-2 text-sm rounded bg-red-50 text-red-700 border border-red-200';
-        note.textContent = 'Este día está cerrado: no se pueden tomar nuevos turnos. (Los turnos existentes se muestran abajo y podés cancelarlos si querés.)';
-        listEl.appendChild(note);
-      }
+      if (!items.length) { emptyEl.classList.remove('hidden'); return; }
 
-      if (!items.length) {
-        listEl.innerHTML += `<div class="p-4 text-sm text-gray-500">No hay turnos para esa fecha.</div>`;
-        return;
-      }
+      items.sort((a,b)=>SLOTS.indexOf(a.time)-SLOTS.indexOf(b.time));
 
       items.forEach(b => {
         const row = document.createElement('div');
@@ -122,6 +153,7 @@
           <div>
             <div class="font-medium text-gray-800">${b.nombre} ${b.apellido}</div>
             <div class="text-sm text-gray-500">${b.date} — ${b.time}</div>
+            <div class="text-xs text-gray-500">Tel: ${b.telefono || '-'} · Email: ${b.email || '-'}</div>
           </div>
           <button data-id="${b.id}" class="cancel px-3 py-1 text-sm rounded border hover:bg-red-50 hover:text-red-700">Cancelar</button>
         `;
@@ -129,35 +161,50 @@
       });
 
       document.querySelectorAll('.cancel').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
+        btn.addEventListener('click', async (e)=>{
           const id = e.currentTarget.getAttribute('data-id');
           if (!confirm('¿Cancelar este turno?')) return;
-          const res = await fetch(`/api/book/${id}`, { method: 'DELETE' });
-          if (res.ok) render();
-          else alert('No se pudo cancelar.');
+          const res = await fetch(`/api/book/${id}`, { method:'DELETE' });
+          if (res.ok) { await renderAll(); }
+          else { alert('No se pudo cancelar.'); }
         });
       });
     }
 
-    // Eventos
-    toggleCloseBtn.addEventListener('click', async () => {
+    async function renderClosureButtons() {
+      const closed = await isClosed(dateInput.value);
+      closeBtn.disabled = closed;
+      openBtn.disabled = !closed;
+      closeBtn.classList.toggle('opacity-50', closed);
+      openBtn.classList.toggle('opacity-50', !closed);
+    }
+
+    async function renderAll() {
+      await renderClosureButtons();
+      await renderSlotsGrid();
+      await renderList();
+    }
+
+    refreshBtn.addEventListener('click', renderAll);
+    dateInput.addEventListener('change', renderAll);
+
+    closeBtn.addEventListener('click', async ()=>{
       const date = dateInput.value;
-      if (!date) { alert('Elegí una fecha primero.'); return; }
-      const closed = await isClosed(date);
-      const ok = await setClosed(date, !closed);
-      if (!ok) { alert('No se pudo cambiar el estado del día.'); return; }
-      await render();
+      const res = await fetch('/api/closures', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ date })
+      });
+      if (res.ok) await renderAll(); else alert('No se pudo cerrar el día.');
     });
 
-    loadBtn.addEventListener('click', render);
-    clearBtn.addEventListener('click', () => { dateInput.value = ''; render(); });
-    dateInput.addEventListener('change', render);
-    window.addEventListener('focus', render);
+    openBtn.addEventListener('click', async ()=>{
+      const date = dateInput.value;
+      const res = await fetch(`/api/closures/${date}`, { method:'DELETE' });
+      if (res.ok) await renderAll(); else alert('No se pudo reabrir el día.');
+    });
 
-    // Default: hoy
-    if (!dateInput.value) dateInput.value = todayStr();
-
-    render();
+    renderAll();
   </script>
 </body>
 </html>

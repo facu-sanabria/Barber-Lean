@@ -47,6 +47,21 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(date)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_bookings_datetime ON bookings(date, time)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_closures_date ON closures(date)');
+    // Nuevas columnas (si faltan)
+    await client.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS telefono VARCHAR(50)");
+    await client.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS email VARCHAR(150)");
+    // Tabla de bloqueos por slot
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS blocked_slots (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        time TIME NOT NULL,
+        UNIQUE(date, time)
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_blocked_date ON blocked_slots(date)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_blocked_datetime ON blocked_slots(date, time)');
+
 
     client.release();
     console.log('✅ Base de datos PostgreSQL inicializada correctamente');
@@ -62,6 +77,8 @@ async function getBookings(date = null) {
     SELECT id,
            nombre,
            apellido,
+           telefono,              -- <-- agregar
+           email,                 -- <-- agregar
            to_char(date, 'YYYY-MM-DD') AS date,
            to_char(time, 'HH24:MI')     AS time
     FROM bookings
@@ -79,15 +96,20 @@ async function createBooking(booking) {
   try {
     const client = await pool.connect();
     const query = `
-      INSERT INTO bookings (nombre, apellido, date, time)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `;
+  INSERT INTO bookings (nombre, apellido, telefono, email, date, time)
+  VALUES ($1, $2, $3, $4, $5, $6)
+  RETURNING id, nombre, apellido, telefono, email,
+            to_char(date,'YYYY-MM-DD') AS date,
+            to_char(time,'HH24:MI')    AS time
+`;
+
     
     const result = await client.query(query, [
-      booking.nombre, 
-      booking.apellido, 
-      booking.date, 
+      booking.nombre,
+      booking.apellido,
+      booking.telefono,
+      booking.email,
+      booking.date,
       booking.time
     ]);
     
@@ -173,6 +195,34 @@ async function removeClosure(date) {
 }
 
 // Función para cerrar la conexión del pool
+
+async function getBlockedSlots(date) {
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query("SELECT to_char(time,'HH24:MI') AS time FROM blocked_slots WHERE date=$1 ORDER BY time", [date]);
+    return rows.map(r=>r.time);
+  } finally {
+    client.release();
+  }
+}
+async function addBlockedSlots(date, slots) {
+  if (!slots?.length) return getBlockedSlots(date);
+  const client = await pool.connect();
+  try {
+    const values = slots.map((_,i)=>`($1, $${i+2})`).join(',');
+    await client.query(`INSERT INTO blocked_slots (date, time) VALUES ${values} ON CONFLICT (date,time) DO NOTHING`, [date, ...slots]);
+    return getBlockedSlots(date);
+  } finally { client.release(); }
+}
+async function removeBlockedSlots(date, slots) {
+  const client = await pool.connect();
+  try {
+    if (!slots?.length) return getBlockedSlots(date);
+    const inParams = slots.map((_,i)=>`$${i+2}`).join(',');
+    await client.query(`DELETE FROM blocked_slots WHERE date=$1 AND time IN (${inParams})`, [date, ...slots]);
+    return getBlockedSlots(date);
+  } finally { client.release(); }
+}
 async function closePool() {
   await pool.end();
 }
@@ -186,5 +236,8 @@ export default {
   getClosures,
   addClosure,
   removeClosure,
+  getBlockedSlots,
+  addBlockedSlots,
+  removeBlockedSlots,
   closePool
 };

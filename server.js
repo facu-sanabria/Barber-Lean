@@ -1,6 +1,8 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const config = require('./config');
+const nodemailer = require('nodemailer');
 const { 
   initDatabase, 
   getBookings, 
@@ -10,10 +12,52 @@ const {
   getClosures, 
   addClosure, 
   removeClosure,
+  getBlockedSlots,
+  addBlockedSlots,
+  removeBlockedSlots,
   closePool 
 } = require('./database').default;
 
+// --- BASIC AUTH PARA ADMIN ---
+function basicAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const [type, encoded] = auth.split(' ');
+  if (type === 'Basic' && encoded) {
+    const [user, pass] = Buffer.from(encoded, 'base64').toString().split(':');
+    if (user === process.env.ADMIN_USER && pass === process.env.ADMIN_PASS) {
+      return next();
+    }
+  }
+  res.set('WWW-Authenticate', 'Basic realm="Admin"');
+  return res.status(401).send('Auth required');
+}
+
 const app = express();
+// Email (nodemailer)
+const transporter = nodemailer.createTransport({
+  host: process.env.MAIL_HOST,
+  port: Number(process.env.MAIL_PORT || 587),
+  secure: false,
+  auth: { user: process.env.MAIL_USER, pass: process.env.MAIL_PASS }
+});
+async function sendMail({to, subject, html}) {
+  if (!to) return;
+  await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to, subject, html });
+}
+function bookingHtmlConfirm(b){ return `
+  <div style="font-family:sans-serif">
+    <h2>✅ Turno confirmado</h2>
+    <p>Hola ${b.nombre} ${b.apellido}, tu turno fue confirmado.</p>
+    <p><strong>Fecha:</strong> ${b.date} — <strong>Horario:</strong> ${b.time}</p>
+    <p>Tel: ${b.telefono ?? '-'} · Email: ${b.email ?? '-'}</p>
+  </div>`; }
+function bookingHtmlCancel(b){ return `
+  <div style="font-family:sans-serif">
+    <h2>❌ Turno cancelado</h2>
+    <p>Hola ${b.nombre} ${b.apellido}, lamentamos informarte que tu turno fue cancelado.</p>
+    <p><strong>Fecha:</strong> ${b.date} — <strong>Horario:</strong> ${b.time}</p>
+  </div>`; }
+
 const PORT = process.env.PORT || (config && config.port) || 3000;
 
 // Config negocio
@@ -22,14 +66,20 @@ const CLOSE_HOUR = config.business.closeHour;  // 19:00 (excluido)
 const SLOT_MINUTES = config.business.slotMinutes;
 
 function buildDaySlots() {
-  const slots = [];
-  for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
-    for (let m = 0; m < 60; m += SLOT_MINUTES) {
-      slots.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
-    }
-  }
-  return slots; // 10:00 ... 18:30
+  return [
+    "11:00","11:30","12:00","12:30","13:00","13:30",
+    "15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00"
+  ];
 }
+
+// Proteger la página del admin
+app.get('/admin.html', basicAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Proteger endpoints de administración
+app.use(['/api/bookings', '/api/blocked', '/api/closures'], basicAuth);
+
 
 // Middlewares
 app.use(express.static(path.join(__dirname, 'public')));
@@ -58,6 +108,10 @@ app.get('/api/availability', async (req, res) => {
     const db = await getBookings(date);
     const taken = new Set(db.map(b => b.time));
 
+    const blockedList = await getBlockedSlots(date);
+    // Normalizar a "HH:MM" por si vienen como "HH:MM:SS"
+    const blocked = new Set((blockedList || []).map(t => (t || '').slice(0, 5)));
+
     // si es hoy, filtrar los horarios que ya pasaron
     const now = new Date();
     const nowMin = now.getHours()*60 + now.getMinutes();
@@ -67,9 +121,13 @@ app.get('/api/availability', async (req, res) => {
       const mins = hh*60 + mm;
       const notTaken = !taken.has(t);
       const notPastToday = d.getTime() > today.getTime() || mins > nowMin;
-      return notTaken && notPastToday;
+      const notBlocked = !blocked.has(t);
+      return notTaken && notPastToday && notBlocked;
     });
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.json({ date, slots: free });
   } catch (error) {
     console.error('Error en /api/availability:', error);
@@ -80,8 +138,8 @@ app.get('/api/availability', async (req, res) => {
 // Reservar
 app.post('/api/book', async (req, res) => {
   try {
-    const { nombre, apellido, date, time } = req.body || {};
-    if (!nombre || !apellido || !date || !time) {
+    const { nombre, apellido, telefono, email, date, time } = req.body || {};
+    if (!nombre || !apellido || !telefono || !email || !date || !time) {
       return res.status(400).json({ error: 'faltan datos' });
     }
 
@@ -101,11 +159,19 @@ app.post('/api/book', async (req, res) => {
     if (!buildDaySlots().includes(time)) {
       return res.status(400).json({ error: 'hora inválida' });
     }
+    const blocked = (await getBlockedSlots(date) || []).map(t => (t || '').slice(0, 5));
+    if (blocked.includes(time)) {
+      return res.status(400).json({ error: 'horario bloqueado' });
+    }
+
+
 
     const exists = await checkBookingExists(date, time);
     if (exists) return res.status(409).json({ error: 'turno ya tomado' });
 
-    const newBooking = await createBooking({ nombre, apellido, date, time });
+    const newBooking = await createBooking({ nombre, apellido, telefono, email, date, time });
+
+    try { await sendMail({ to: newBooking.email, subject: 'Turno confirmado', html: bookingHtmlConfirm(newBooking) }); } catch(e){ console.error('Mail confirm error', e); }
     res.json({ ok: true, booking: newBooking });
   } catch (error) {
     console.error('Error en /api/book:', error);
@@ -125,7 +191,7 @@ app.get('/api/bookings', async (req, res) => {
 });
 
 // --- CANCELAR turno por ID
-app.delete('/api/book/:id', async (req, res) => {
+app.delete('/api/book/:id', basicAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const result = await deleteBooking(id);
@@ -134,6 +200,7 @@ app.delete('/api/book/:id', async (req, res) => {
       return res.status(404).json({ error: 'turno no encontrado' });
     }
     
+    try { await sendMail({ to: result.booking.email, subject: 'Turno cancelado', html: bookingHtmlCancel(result.booking) }); } catch(e){ console.error('Mail cancel error', e); }
     res.json({ ok: true, deleted: result.booking });
   } catch (error) {
     console.error('Error en /api/book/:id:', error);
@@ -172,6 +239,44 @@ app.post('/api/closures', async (req, res) => {
   }
 });
 
+
+
+// Bloqueos de horarios
+app.get('/api/blocked', async (req, res) => {
+  try {
+    const { date } = req.query || {};
+    if (!date) return res.status(400).json({ error: 'Falta date' });
+    const slots = await getBlockedSlots(date);
+    res.json({ date, slots });
+  } catch (error) {
+    console.error('Error en GET /api/blocked:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+app.post('/api/blocked', async (req, res) => {
+  try {
+    const { date, slots } = req.body || {};
+    if (!date || !Array.isArray(slots)) return res.status(400).json({ error: 'Faltan datos' });
+    const updated = await addBlockedSlots(date, slots);
+    res.json({ ok: true, slots: updated });
+  } catch (error) {
+    console.error('Error en POST /api/blocked:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+app.delete('/api/blocked', async (req, res) => {
+  try {
+    const { date, slots } = req.body || {};
+    if (!date || !Array.isArray(slots)) return res.status(400).json({ error: 'Faltan datos' });
+    const updated = await removeBlockedSlots(date, slots);
+    res.json({ ok: true, slots: updated });
+  } catch (error) {
+    console.error('Error en DELETE /api/blocked:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
 // DELETE reabrir día
 app.delete('/api/closures/:date', async (req, res) => {
   try {
